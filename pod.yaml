@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: synthrad-paired-train-pod
+spec:
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 100
+    fsGroup: 100
+  containers:
+  - name: synthrad-paired-training
+    image: gitlab-registry.nrp-nautilus.io/prp/jupyter-stack/prp
+    # image: ubuntu:20.04
+    env:
+    - name: REPO_PATH
+      value: /opt/repo/synthrad2025-mri-ct
+    command:
+    - "bash"
+    - "-c"
+    # args:
+    - |
+      echo "Running as user: $(whoami), UID: $(id -u), GID: $(id -g)"
+
+      # --- Git Repository Setup ---
+      echo "Setting up Git repository..."
+      mkdir -p /opt/repo
+      cd /opt/repo
+
+      if [ -d "synthrad2025-mri-ct" ]; then
+        echo "Repo already exists, pulling latest..."
+        cd synthrad2025-mri-ct
+        git pull origin main
+      else
+        echo "Cloning repo..."
+        git clone --single-branch -b main \
+          https://github.com/Deb-bie/synthrad2025-mri-ct.git \
+          synthrad2025-mri-ct
+        cd synthrad2025-mri-ct
+      fi
+
+      # --- Install dependencies ---
+      echo "Installing dependencies..."
+      pip install --quiet \
+        SimpleITK==2.3.1 \
+        opencv-python-headless \
+        torchmetrics \
+        pandas \
+        tqdm \
+        matplotlib \
+        scipy
+
+      echo "Dependencies installed."
+      echo "Repo ready at: /opt/repo/synthrad2025-mri-ct"
+      echo "Data mounted at: /data"
+      echo "Results will be saved to: /data/results"
+
+      # create results directories
+      mkdir -p /data/results/checkpoints/pix2pix
+      mkdir -p /data/results/checkpoints/paired_cyclegan
+      mkdir -p /data/results/checkpoints/ablation_no_paired_l1
+      mkdir -p /data/results/checkpoints/ablation_separate_generators
+      mkdir -p /data/results/checkpoints/ablation_no_cycle
+      mkdir -p /data/results/logs/pix2pix
+      mkdir -p /data/results/logs/paired_cyclegan
+      mkdir -p /data/results/metrics
+      mkdir -p /data/results/figures
+
+      echo "Directory structure created."
+      echo "Pod is ready. Use kubectl exec to run training."
+
+      # keep pod alive
+      sleep infinity
+
+    volumeMounts:
+    - name: git-volume
+      mountPath: /opt/repo
+    - name: synthrad-data-volume
+      mountPath: /data
+
+    resources:
+      limits:
+        memory: 30Gi
+        cpu: "16"
+        nvidia.com/gpu: "1"
+      requests:
+        memory: 24Gi
+        cpu: "12"
+        nvidia.com/gpu: "1"
+
+  volumes:
+  - name: git-volume
+    emptyDir: {}
+  - name: synthrad-data-volume
+    persistentVolumeClaim:
+      claimName: synthrad-paired-train-data
+
+  restartPolicy: Never
