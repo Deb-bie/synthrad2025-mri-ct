@@ -1,7 +1,9 @@
 import os
 import random
 import numpy as np
-import cv2
+# import cv2
+from PIL import Image
+import numpy as np
 import torch
 import SimpleITK as sitk
 from torch.utils.data import Dataset, DataLoader
@@ -105,23 +107,40 @@ class SynthRADDatasetOnTheFly(Dataset):
 
         mask_slice = mask_array[slice_idx].astype(np.float32)
 
+        # mr_resized = np.stack([
+        #     cv2.resize(mr_stack[c], (self.image_size, self.image_size),
+        #                interpolation=cv2.INTER_LINEAR)
+        #     for c in range(3)
+        # ], axis=0)
+
+        # ct_resized = np.stack([
+        #     cv2.resize(ct_stack[c], (self.image_size, self.image_size),
+        #                interpolation=cv2.INTER_LINEAR)
+        #     for c in range(3)
+        # ], axis=0)
+
+        # mask_resized = cv2.resize(
+        #     mask_slice,
+        #     (self.image_size, self.image_size),
+        #     interpolation=cv2.INTER_NEAREST
+        # )
+
+
         mr_resized = np.stack([
-            cv2.resize(mr_stack[c], (self.image_size, self.image_size),
-                       interpolation=cv2.INTER_LINEAR)
+            np.array(Image.fromarray(mr_stack[c]).resize(
+                (self.image_size, self.image_size), Image.BILINEAR))
             for c in range(3)
         ], axis=0)
 
         ct_resized = np.stack([
-            cv2.resize(ct_stack[c], (self.image_size, self.image_size),
-                       interpolation=cv2.INTER_LINEAR)
+            np.array(Image.fromarray(ct_stack[c]).resize(
+                (self.image_size, self.image_size), Image.BILINEAR))
             for c in range(3)
         ], axis=0)
 
-        mask_resized = cv2.resize(
-            mask_slice,
-            (self.image_size, self.image_size),
-            interpolation=cv2.INTER_NEAREST
-        )
+        mask_resized = np.array(Image.fromarray(mask_slice).resize(
+            (self.image_size, self.image_size), Image.NEAREST))
+
 
         mr   = torch.tensor(mr_resized,   dtype=torch.float32)
         ct   = torch.tensor(ct_resized,   dtype=torch.float32)
