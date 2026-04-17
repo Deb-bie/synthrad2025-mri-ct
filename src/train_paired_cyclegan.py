@@ -3,6 +3,7 @@ import sys
 import json
 import random
 import argparse
+import psutil, gc
 import numpy as np
 import pandas as pd
 import torch
@@ -191,6 +192,13 @@ def main():
         print(f"Resumed from epoch {start_epoch}. Best mean SSIM: {best_ssim:.4f}")
 
     for epoch in range(start_epoch, config["EPOCHS"] + 1):
+        # Log memory at start of each epoch
+        mem = psutil.virtual_memory()
+        print(f"[Epoch {epoch}] RAM used: {mem.used / 1e9:.1f}GB / {mem.total / 1e9:.1f}GB")
+        gc.collect()
+        torch.cuda.empty_cache()
+
+
         torch.set_grad_enabled(True)
         G.train(); F.train(); D_CT.train(); D_MR.train()
 
