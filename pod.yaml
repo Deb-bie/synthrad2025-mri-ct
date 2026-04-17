@@ -3,25 +3,22 @@ kind: Pod
 metadata:
   name: synthrad-paired-train-pod
 spec:
-  securityContext:
-    runAsUser: 1000
-    runAsGroup: 100
-    fsGroup: 100
   containers:
   - name: synthrad-paired-training
-    image: gitlab-registry.nrp-nautilus.io/prp/jupyter-stack/prp
-    # image: ubuntu:20.04
+    image: nvcr.io/nvidia/pytorch:23.10-py3
+    imagePullPolicy: IfNotPresent
+
     env:
     - name: REPO_PATH
       value: /opt/repo/synthrad2025-mri-ct
+
     command:
     - "bash"
     - "-c"
-    # args:
     - |
-      echo "Running as user: $(whoami), UID: $(id -u), GID: $(id -g)"
+      echo "Checking GPU..."
+      nvidia-smi
 
-      # --- Git Repository Setup ---
       echo "Setting up Git repository..."
       mkdir -p /opt/repo
       cd /opt/repo
@@ -38,37 +35,44 @@ spec:
         cd synthrad2025-mri-ct
       fi
 
-      # --- Install dependencies ---
-      echo "Installing dependencies..."
-      pip install --quiet \
+      echo "Installing Python dependencies..."
+      pip install -q \
+        numpy==1.24.3 \
+        pandas==2.0.3 \
         SimpleITK==2.3.1 \
         opencv-python-headless \
         torchmetrics \
-        pandas \
         tqdm \
         matplotlib \
-        scipy
+        scipy \
+        psutil
 
-      echo "Dependencies installed."
-      echo "Repo ready at: /opt/repo/synthrad2025-mri-ct"
-      echo "Data mounted at: /data"
-      echo "Results will be saved to: /data/results"
-
-      # create results directories
-      mkdir -p /data/results/checkpoints/pix2pix
-      mkdir -p /data/results/checkpoints/paired_cyclegan
-      mkdir -p /data/results/checkpoints/ablation_no_paired_l1
-      mkdir -p /data/results/checkpoints/ablation_separate_generators
-      mkdir -p /data/results/checkpoints/ablation_no_cycle
+      echo "Creating result directories..."
+      mkdir -p /data/results/checkpoints/pix2pix/AB/mr2ct
+      mkdir -p /data/results/checkpoints/pix2pix/AB/ct2mr
+      mkdir -p /data/results/checkpoints/pix2pix/TH/mr2ct
+      mkdir -p /data/results/checkpoints/pix2pix/TH/ct2mr
+      mkdir -p /data/results/checkpoints/pix2pix/HN/mr2ct
+      mkdir -p /data/results/checkpoints/pix2pix/HN/ct2mr
+      mkdir -p /data/results/checkpoints/paired_cyclegan/AB
+      mkdir -p /data/results/checkpoints/paired_cyclegan/TH
+      mkdir -p /data/results/checkpoints/paired_cyclegan/HN
+      mkdir -p /data/results/checkpoints/ablation_no_paired_l1/AB
+      mkdir -p /data/results/checkpoints/ablation_separate_generators/AB
+      mkdir -p /data/results/checkpoints/ablation_no_cycle/AB
       mkdir -p /data/results/logs/pix2pix
       mkdir -p /data/results/logs/paired_cyclegan
+      mkdir -p /data/results/logs/ablations
       mkdir -p /data/results/metrics
       mkdir -p /data/results/figures
 
-      echo "Directory structure created."
-      echo "Pod is ready. Use kubectl exec to run training."
+      echo "============================================"
+      echo "Pod is ready."
+      echo "  Code:    /opt/repo/synthrad2025-mri-ct"
+      echo "  Data:    /data/Task1"
+      echo "  Results: /data/results"
+      echo "============================================"
 
-      # keep pod alive
       sleep infinity
 
     volumeMounts:
@@ -82,10 +86,12 @@ spec:
         memory: 30Gi
         cpu: "16"
         nvidia.com/gpu: "1"
+        ephemeral-storage: 50Gi
       requests:
         memory: 24Gi
         cpu: "12"
         nvidia.com/gpu: "1"
+        ephemeral-storage: 20Gi
 
   volumes:
   - name: git-volume
