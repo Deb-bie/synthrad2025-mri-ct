@@ -9,6 +9,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
 from torchmetrics.functional import structural_similarity_index_measure as ssim_metric
 from torchmetrics.functional import peak_signal_noise_ratio as psnr_metric
@@ -35,56 +36,88 @@ def load_split(split_dir, anatomy):
 
 
 def train_step(G, F, D_CT, D_MR, opt_G, opt_D,
-               batch, gan_loss, l1_loss, buf_CT, buf_MR, config, device):
+               batch, gan_loss, l1_loss, buf_CT, buf_MR, config, device, scaler_G, scaler_D):
     torch.set_grad_enabled(True)
 
     real_MR = batch["mr"].to(device)
     real_CT = batch["ct"].to(device)
     mask    = batch["mask"].to(device).detach()
 
+    if torch.isnan(real_MR).any() or torch.isnan(real_CT).any():
+        print("⚠️  NaN in input — skipping")
+        return None
+
+    # ── Generator step ────────────────────────────────────────────────
     opt_G.zero_grad()
+    with autocast():
+        fake_CT  = G(real_MR); fake_MR  = F(real_CT)
+        cycle_MR = F(fake_CT); cycle_CT = G(fake_MR)
+        idt_CT   = G(real_CT); idt_MR   = F(real_MR)
 
-    fake_CT  = G(real_MR); fake_MR  = F(real_CT)
-    cycle_MR = F(fake_CT); cycle_CT = G(fake_MR)
-    idt_CT   = G(real_CT); idt_MR   = F(real_MR)
+        pred_fake_CT  = D_CT(fake_CT)
+        pred_fake_MR  = D_MR(fake_MR)
 
-    pred_fake_CT  = D_CT(fake_CT)
-    pred_fake_MR  = D_MR(fake_MR)
-    real_label_CT = torch.ones_like(pred_fake_CT)
-    real_label_MR = torch.ones_like(pred_fake_MR)
+        loss_G = (
+            gan_loss(pred_fake_CT, torch.ones_like(pred_fake_CT))
+            + gan_loss(pred_fake_MR, torch.ones_like(pred_fake_MR))
+            + l1_loss(cycle_MR * mask, real_MR * mask) * config["LAMBDA_CYCLE"]
+            + l1_loss(cycle_CT * mask, real_CT * mask) * config["LAMBDA_CYCLE"]
+            + l1_loss(idt_CT   * mask, real_CT * mask) * config["LAMBDA_IDENTITY"]
+            + l1_loss(idt_MR   * mask, real_MR * mask) * config["LAMBDA_IDENTITY"]
+            + l1_loss(fake_CT  * mask, real_CT * mask) * config["LAMBDA_PAIRED"]
+            + l1_loss(fake_MR  * mask, real_MR * mask) * config["LAMBDA_PAIRED"]
+        )
 
-    loss_G = (
-        gan_loss(pred_fake_CT, real_label_CT)
-        + gan_loss(pred_fake_MR, real_label_MR)
-        + l1_loss(cycle_MR * mask, real_MR * mask) * config["LAMBDA_CYCLE"]
-        + l1_loss(cycle_CT * mask, real_CT * mask) * config["LAMBDA_CYCLE"]
-        + l1_loss(idt_CT   * mask, real_CT * mask) * config["LAMBDA_IDENTITY"]
-        + l1_loss(idt_MR   * mask, real_MR * mask) * config["LAMBDA_IDENTITY"]
-        + l1_loss(fake_CT  * mask, real_CT * mask) * config["LAMBDA_PAIRED"]
-        + l1_loss(fake_MR  * mask, real_MR * mask) * config["LAMBDA_PAIRED"]
+    if torch.isnan(loss_G) or torch.isinf(loss_G):
+        print("⚠️  NaN/Inf G loss — skipping")
+        opt_G.zero_grad()
+        return None
+
+    scaler_G.scale(loss_G).backward()
+    scaler_G.unscale_(opt_G)
+    torch.nn.utils.clip_grad_norm_(
+        list(G.parameters()) + list(F.parameters()), max_norm=1.0
     )
-    loss_G.backward()
-    opt_G.step()
+    scaler_G.step(opt_G)
+    scaler_G.update()
 
+
+
+    # ── Discriminator step ────────────────────────────────────────────
     opt_D.zero_grad()
-    fake_CT_buf   = buf_CT.push_and_pop(fake_CT.detach())
-    fake_MR_buf   = buf_MR.push_and_pop(fake_MR.detach())
-    pred_real_CT  = D_CT(real_CT);      pred_fake_CT2 = D_CT(fake_CT_buf)
-    pred_real_MR  = D_MR(real_MR);      pred_fake_MR2 = D_MR(fake_MR_buf)
-    real_D_CT     = torch.ones_like(pred_real_CT);  fake_D_CT = torch.zeros_like(pred_fake_CT2)
-    real_D_MR     = torch.ones_like(pred_real_MR);  fake_D_MR = torch.zeros_like(pred_fake_MR2)
-    loss_D        = (
-        (gan_loss(pred_real_CT, real_D_CT) + gan_loss(pred_fake_CT2, fake_D_CT)) * 0.5
-      + (gan_loss(pred_real_MR, real_D_MR) + gan_loss(pred_fake_MR2, fake_D_MR)) * 0.5
+    fake_CT_buf = buf_CT.push_and_pop(fake_CT.detach())
+    fake_MR_buf = buf_MR.push_and_pop(fake_MR.detach())
+
+    with autocast():
+        pred_real_CT  = D_CT(real_CT);  pred_fake_CT2 = D_CT(fake_CT_buf)
+        pred_real_MR  = D_MR(real_MR);  pred_fake_MR2 = D_MR(fake_MR_buf)
+        loss_D = (
+            (gan_loss(pred_real_CT, torch.ones_like(pred_real_CT))
+             + gan_loss(pred_fake_CT2, torch.zeros_like(pred_fake_CT2))) * 0.5
+          + (gan_loss(pred_real_MR, torch.ones_like(pred_real_MR))
+             + gan_loss(pred_fake_MR2, torch.zeros_like(pred_fake_MR2))) * 0.5
+        )
+
+    if torch.isnan(loss_D) or torch.isinf(loss_D):
+        print("⚠️  NaN/Inf D loss — skipping")
+        opt_D.zero_grad()
+        return None
+
+    scaler_D.scale(loss_D).backward()
+    scaler_D.unscale_(opt_D)
+    torch.nn.utils.clip_grad_norm_(
+        list(D_CT.parameters()) + list(D_MR.parameters()), max_norm=1.0
     )
-    loss_D.backward()
-    opt_D.step()
+    scaler_D.step(opt_D)
+    scaler_D.update()
 
     return {
         "loss_G_total": loss_G.item(),
         "loss_D_total": loss_D.item(),
-        "loss_paired":  (l1_loss(fake_CT * mask, real_CT * mask) + l1_loss(fake_MR * mask, real_MR * mask)).item(),
-        "loss_cycle":   (l1_loss(cycle_MR * mask, real_MR * mask) + l1_loss(cycle_CT * mask, real_CT * mask)).item(),
+        "loss_paired":  (l1_loss(fake_CT * mask, real_CT * mask)
+                        + l1_loss(fake_MR * mask, real_MR * mask)).item(),
+        "loss_cycle":   (l1_loss(cycle_MR * mask, real_MR * mask)
+                        + l1_loss(cycle_CT * mask, real_CT * mask)).item(),
     }
 
 
@@ -116,6 +149,9 @@ def validate(G, F, val_loader, device):
 def main():
     args   = parse_args()
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    scaler_G = GradScaler()
+    scaler_D = GradScaler()
 
     with open(args.config, "r") as f:
         config = json.load(f)
@@ -206,7 +242,7 @@ def main():
 
         for batch in tqdm(train_loader, desc=f"Epoch {epoch}/{config['EPOCHS']}"):
             losses = train_step(G, F, D_CT, D_MR, opt_G, opt_D,
-                                batch, gan_loss, l1_loss, buf_CT, buf_MR, config, device)
+                                batch, gan_loss, l1_loss, buf_CT, buf_MR, config, device, scaler_G, scaler_D)
             for k, v in losses.items():
                 epoch_losses[k].append(v)
 
