@@ -73,6 +73,17 @@ spec:
       echo "  Results: /data/results"
       echo "============================================"
 
+
+      python scripts/train_paired_cyclegan.py \
+        --anatomy AB \
+        --data_root /data/Task1 \
+        --split_dir /data/splits \
+        --config configs/config.json \
+        --output_dir /data/results \
+        >> /data/results/logs/train_AB.log 2>&1
+
+      echo "EXIT CODE: $?" >> /data/results/logs/train_AB.log
+
       sleep infinity
 
     volumeMounts:
