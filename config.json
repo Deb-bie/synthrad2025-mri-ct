@@ -1,6 +1,6 @@
 {
   "SEED": 42,
-  "IMAGE_SIZE": 128,
+  "IMAGE_SIZE": 256,
   "BATCH_SIZE": 1,
   "EPOCHS": 100,
   "LR": 0.0002,
