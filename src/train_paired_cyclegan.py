@@ -96,7 +96,7 @@ def train_step(G, F, D_CT, D_MR, opt_G, opt_D,
 
         loss_G = (
             gan_loss(pred_fake_CT, torch.ones_like(pred_fake_CT))
-            + gan_loss(pred_fake_MR, torch.ones_like(pred_fake_MR))
+            + gan_loss(pred_fake_MR1, torch.ones_like(pred_fake_MR1))
             + l1_loss(cycle_MR * mask, real_MR * mask) * config["LAMBDA_CYCLE"]
             + l1_loss(cycle_CT * mask, real_CT * mask) * config["LAMBDA_CYCLE"]
             + l1_loss(idt_CT   * mask, real_CT * mask) * config["LAMBDA_IDENTITY"]
