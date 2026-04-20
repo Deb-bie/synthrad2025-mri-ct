@@ -298,7 +298,7 @@ def main():
 
         for batch in tqdm(train_loader, desc=f"Epoch {epoch}/{config['EPOCHS']}"):
             losses = train_step(G, F, D_CT, D_MR, opt_G, opt_D,
-                                batch, gan_loss, l1_loss, buf_CT, buf_MR, config, device, scaler_G, scaler_D)
+                                batch, gan_loss, l1_loss, buf_CT, buf_MR, config, device, scaler_G, scaler_D, perceptual_loss)
             for k, v in losses.items():
                 epoch_losses[k].append(v)
 
