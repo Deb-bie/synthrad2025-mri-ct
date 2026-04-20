@@ -272,6 +272,11 @@ class SynthRADDatasetOnTheFly(Dataset):
         mask_resized = np.array(Image.fromarray(mask_slice).resize(
             (self.image_size, self.image_size), Image.NEAREST))
 
+        for c in range(3):
+            ct_resized[c] = match_histograms(
+                ct_resized[c], mr_resized[c]
+            ).astype(np.float32)
+
         mr   = torch.tensor(mr_resized,   dtype=torch.float32)
         ct   = torch.tensor(ct_resized,   dtype=torch.float32)
         mask = torch.tensor(mask_resized, dtype=torch.float32).unsqueeze(0)

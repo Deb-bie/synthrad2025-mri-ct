@@ -17,6 +17,11 @@ from torchmetrics.functional import peak_signal_noise_ratio as psnr_metric
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.dataset import make_dataloader
 from src.models  import ResNetGenerator, PatchGANDiscriminator, init_weights, ImageBuffer
+from skimage.exposure import match_histograms
+from src.models import ResNetGenerator, UNetGenerator, PatchGANDiscriminator, \
+                       MultiScaleDiscriminator, init_weights, ImageBuffer
+from torchvision.models import vgg16
+
 
 
 def parse_args():
@@ -36,7 +41,8 @@ def load_split(split_dir, anatomy):
 
 
 def train_step(G, F, D_CT, D_MR, opt_G, opt_D,
-               batch, gan_loss, l1_loss, buf_CT, buf_MR, config, device, scaler_G, scaler_D):
+               batch, gan_loss, l1_loss, buf_CT, buf_MR, config, device, scaler_G, scaler_D,
+               perceptual_loss):
     torch.set_grad_enabled(True)
 
     real_MR = batch["mr"].to(device)
@@ -50,12 +56,19 @@ def train_step(G, F, D_CT, D_MR, opt_G, opt_D,
     # ── Generator step ────────────────────────────────────────────────
     opt_G.zero_grad()
     with autocast():
+        # fake_CT  = G(real_MR); fake_MR  = F(real_CT)
+        # cycle_MR = F(fake_CT); cycle_CT = G(fake_MR)
+        # idt_CT   = G(real_CT); idt_MR   = F(real_MR)
+
+        # pred_fake_CT  = D_CT(fake_CT)
+        # pred_fake_MR  = D_MR(fake_MR)
+
         fake_CT  = G(real_MR); fake_MR  = F(real_CT)
         cycle_MR = F(fake_CT); cycle_CT = G(fake_MR)
         idt_CT   = G(real_CT); idt_MR   = F(real_MR)
 
-        pred_fake_CT  = D_CT(fake_CT)
-        pred_fake_MR  = D_MR(fake_MR)
+        pred_fake_CT       = D_CT(fake_CT)
+        pred_fake_MR1, pred_fake_MR2 = D_MR(fake_MR)
 
         loss_G = (
             gan_loss(pred_fake_CT, torch.ones_like(pred_fake_CT))
@@ -64,8 +77,11 @@ def train_step(G, F, D_CT, D_MR, opt_G, opt_D,
             + l1_loss(cycle_CT * mask, real_CT * mask) * config["LAMBDA_CYCLE"]
             + l1_loss(idt_CT   * mask, real_CT * mask) * config["LAMBDA_IDENTITY"]
             + l1_loss(idt_MR   * mask, real_MR * mask) * config["LAMBDA_IDENTITY"]
-            + l1_loss(fake_CT  * mask, real_CT * mask) * config["LAMBDA_PAIRED"]
-            + l1_loss(fake_MR  * mask, real_MR * mask) * config["LAMBDA_PAIRED"]
+            # + l1_loss(fake_CT  * mask, real_CT * mask) * config["LAMBDA_PAIRED"]
+            # + l1_loss(fake_MR  * mask, real_MR * mask) * config["LAMBDA_PAIRED"]
+            + l1_loss(fake_CT * mask, real_CT * mask) * config["LAMBDA_PAIRED_MR2CT"]
+            + l1_loss(fake_MR * mask, real_MR * mask) * config["LAMBDA_PAIRED_CT2MR"]
+            + perceptual_loss(fake_MR * mask, real_MR * mask) * config["LAMBDA_PERCEPTUAL"]
         )
 
     if torch.isnan(loss_G) or torch.isinf(loss_G):
@@ -89,13 +105,19 @@ def train_step(G, F, D_CT, D_MR, opt_G, opt_D,
     fake_MR_buf = buf_MR.push_and_pop(fake_MR.detach())
 
     with autocast():
-        pred_real_CT  = D_CT(real_CT);  pred_fake_CT2 = D_CT(fake_CT_buf)
-        pred_real_MR  = D_MR(real_MR);  pred_fake_MR2 = D_MR(fake_MR_buf)
+        pred_real_CT        = D_CT(real_CT)
+        pred_real_MR1, pred_real_MR2 = D_MR(real_MR)
+        pred_fake_CT2       = D_CT(buf_CT.push_and_pop(fake_CT.detach()))
+        pred_fake_MR_buf    = buf_MR.push_and_pop(fake_MR.detach())
+        pred_fake_MR_buf1, pred_fake_MR_buf2 = D_MR(pred_fake_MR_buf)
+
         loss_D = (
             (gan_loss(pred_real_CT, torch.ones_like(pred_real_CT))
              + gan_loss(pred_fake_CT2, torch.zeros_like(pred_fake_CT2))) * 0.5
-          + (gan_loss(pred_real_MR, torch.ones_like(pred_real_MR))
-             + gan_loss(pred_fake_MR2, torch.zeros_like(pred_fake_MR2))) * 0.5
+          + (gan_loss(pred_real_MR1, torch.ones_like(pred_real_MR1))
+             + gan_loss(pred_fake_MR_buf1, torch.zeros_like(pred_fake_MR_buf1))) * 0.5
+          + (gan_loss(pred_real_MR2, torch.ones_like(pred_real_MR2))
+             + gan_loss(pred_fake_MR_buf2, torch.zeros_like(pred_fake_MR_buf2))) * 0.25
         )
 
     if torch.isnan(loss_D) or torch.isinf(loss_D):
@@ -183,8 +205,18 @@ def main():
 
     G    = ResNetGenerator(in_ch=3, out_ch=3).to(device)
     F    = ResNetGenerator(in_ch=3, out_ch=3).to(device)
+    # D_CT = PatchGANDiscriminator(in_ch=3).to(device)
+    # D_MR = PatchGANDiscriminator(in_ch=3).to(device)
+
     D_CT = PatchGANDiscriminator(in_ch=3).to(device)
-    D_MR = PatchGANDiscriminator(in_ch=3).to(device)
+    D_MR = MultiScaleDiscriminator(in_ch=3).to(device)
+
+    # Add perceptual loss
+    perceptual_loss = PerceptualLoss().to(device)
+
+
+
+
     for model in [G, F, D_CT, D_MR]:
         init_weights(model)
 

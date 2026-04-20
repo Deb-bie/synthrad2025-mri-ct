@@ -88,6 +88,7 @@ class UNetGenerator(nn.Module):
         self.e6     = UNetBlock(features * 8, features * 8, down=True)
         self.e7     = UNetBlock(features * 8, features * 8, down=True)
         self.e8     = UNetBlock(features * 8, features * 8, down=True, use_bn=False)
+
         self.d1     = UNetBlock(features * 8,     features * 8, down=False, dropout=True)
         self.d2     = UNetBlock(features * 8 * 2, features * 8, down=False, dropout=True)
         self.d3     = UNetBlock(features * 8 * 2, features * 8, down=False, dropout=True)
@@ -101,19 +102,30 @@ class UNetGenerator(nn.Module):
         )
         self.act_e1 = nn.LeakyReLU(0.2, inplace=True)
 
+        # ── Attention gates on skip connections ──────────────────────
+        self.att1 = AttentionGate(features * 8)
+        self.att2 = AttentionGate(features * 8)
+        self.att3 = AttentionGate(features * 8)
+        self.att4 = AttentionGate(features * 8)
+        self.att5 = AttentionGate(features * 4)
+        self.att6 = AttentionGate(features * 2)
+        self.att7 = AttentionGate(features)
+
     def forward(self, x):
         e1 = self.act_e1(self.e1(x))
         e2 = self.e2(e1); e3 = self.e3(e2); e4 = self.e4(e3)
         e5 = self.e5(e4); e6 = self.e6(e5); e7 = self.e7(e6)
         e8 = self.e8(e7)
+
         d1 = self.d1(e8)
-        d2 = self.d2(torch.cat([d1, e7], dim=1))
-        d3 = self.d3(torch.cat([d2, e6], dim=1))
-        d4 = self.d4(torch.cat([d3, e5], dim=1))
-        d5 = self.d5(torch.cat([d4, e4], dim=1))
-        d6 = self.d6(torch.cat([d5, e3], dim=1))
-        d7 = self.d7(torch.cat([d6, e2], dim=1))
-        return self.out(torch.cat([d7, e1], dim=1))
+        d2 = self.d2(torch.cat([d1, self.att1(d1, e7)], dim=1))
+        d3 = self.d3(torch.cat([d2, self.att2(d2, e6)], dim=1))
+        d4 = self.d4(torch.cat([d3, self.att3(d3, e5)], dim=1))
+        d5 = self.d5(torch.cat([d4, self.att4(d4, e4)], dim=1))
+        d6 = self.d6(torch.cat([d5, self.att5(d5, e3)], dim=1))
+        d7 = self.d7(torch.cat([d6, self.att6(d6, e2)], dim=1))
+        return self.out(torch.cat([d7, self.att7(d7, e1)], dim=1))
+
 
 
 # ---- PatchGAN Discriminator ----
@@ -181,3 +193,42 @@ class ImageBuffer:
                 else:
                     result.append(image)
         return torch.cat(result, dim=0)
+
+
+
+class AttentionGate(nn.Module):
+    """
+    Soft attention on skip connections.
+    Helps generator focus on ambiguous soft tissue regions for CT->MR.
+    """
+    def __init__(self, channels):
+        super().__init__()
+        self.gate = nn.Sequential(
+            nn.Conv2d(channels * 2, channels, kernel_size=1),
+            nn.BatchNorm2d(channels),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x, skip):
+        attention = self.gate(torch.cat([x, skip], dim=1))
+        return skip * attention
+
+
+
+class MultiScaleDiscriminator(nn.Module):
+    """
+    Two PatchGAN discriminators operating at different scales.
+    Scale 1: original resolution
+    Scale 2: 2x downsampled
+    Helps CT->MR capture both coarse tissue boundaries and fine texture.
+    """
+    def __init__(self, in_ch=3, features=64):
+        super().__init__()
+        self.D1 = PatchGANDiscriminator(in_ch=in_ch, features=features)
+        self.D2 = PatchGANDiscriminator(in_ch=in_ch, features=features)
+        self.downsample = nn.AvgPool2d(kernel_size=2)
+
+    def forward(self, x):
+        pred1 = self.D1(x)
+        pred2 = self.D2(self.downsample(x))
+        return pred1, pred2

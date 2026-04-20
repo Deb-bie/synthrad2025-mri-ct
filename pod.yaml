@@ -3,6 +3,7 @@ kind: Pod
 metadata:
   name: synthrad-paired-train-pod
 spec:
+  activeDeadlineSeconds: 864000
   containers:
   - name: synthrad-paired-training
     image: nvcr.io/nvidia/pytorch:23.10-py3
@@ -94,13 +95,13 @@ spec:
 
     resources:
       limits:
-        memory: 30Gi
+        memory: 32Gi
         cpu: "16"
         nvidia.com/gpu: "1"
         ephemeral-storage: 50Gi
       requests:
-        memory: 24Gi
-        cpu: "12"
+        memory: 16Gi
+        cpu: "8"
         nvidia.com/gpu: "1"
         ephemeral-storage: 20Gi
 
@@ -112,3 +113,6 @@ spec:
       claimName: synthrad-paired-train-data
 
   restartPolicy: Never
+
+
+
