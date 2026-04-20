@@ -59,7 +59,8 @@ spec:
             matplotlib \
             scipy \
             psutil \
-            scikit-image
+            scikit-image \
+            torchvision
 
           mkdir -p /data/results/checkpoints/paired_cyclegan/AB
           mkdir -p /data/results/checkpoints/paired_cyclegan/TH

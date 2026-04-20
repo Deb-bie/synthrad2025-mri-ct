@@ -21,6 +21,26 @@ from skimage.exposure import match_histograms
 from src.models import ResNetGenerator, UNetGenerator, PatchGANDiscriminator, \
                        MultiScaleDiscriminator, init_weights, ImageBuffer
 from torchvision.models import vgg16
+import torch.nn.functional as F
+from torchvision.models import vgg16
+
+
+class PerceptualLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        vgg = vgg16(pretrained=True).features[:16].eval()
+        for p in vgg.parameters():
+            p.requires_grad = False
+        self.vgg = vgg
+        self.l1  = nn.L1Loss()
+
+    def forward(self, fake, real, mask):
+        fake_m = fake * mask
+        real_m = real * mask
+        # VGG expects 3 channels
+        fake_3 = fake_m.repeat(1, 3, 1, 1) if fake_m.shape[1] != 3 else fake_m
+        real_3 = real_m.repeat(1, 3, 1, 1) if real_m.shape[1] != 3 else real_m
+        return self.l1(self.vgg(fake_3), self.vgg(real_3))
 
 
 
