@@ -105,7 +105,8 @@ def train_step(G, F, D_CT, D_MR, opt_G, opt_D,
             # + l1_loss(fake_MR  * mask, real_MR * mask) * config["LAMBDA_PAIRED"]
             + l1_loss(fake_CT * mask, real_CT * mask) * config["LAMBDA_PAIRED_MR2CT"]
             + l1_loss(fake_MR * mask, real_MR * mask) * config["LAMBDA_PAIRED_CT2MR"]
-            + perceptual_loss(fake_MR * mask, real_MR * mask) * config["LAMBDA_PERCEPTUAL"]
+            # + perceptual_loss(fake_MR * mask, real_MR * mask) * config["LAMBDA_PERCEPTUAL"]
+            + perceptual_loss(fake_MR, real_MR, mask) * config["LAMBDA_PERCEPTUAL"]
         )
 
     if torch.isnan(loss_G) or torch.isinf(loss_G):
