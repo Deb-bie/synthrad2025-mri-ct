@@ -23,12 +23,16 @@ from src.models import ResNetGenerator, UNetGenerator, PatchGANDiscriminator, \
 from torchvision.models import vgg16
 import torch.nn.functional as F
 from torchvision.models import vgg16
+from torchvision.models import VGG16_Weights
 
 
 class PerceptualLoss(nn.Module):
     def __init__(self):
         super().__init__()
-        vgg = vgg16(pretrained=True).features[:16].eval()
+        # vgg = vgg16(pretrained=True).features[:16].eval()
+        
+        vgg = vgg16(weights=VGG16_Weights.IMAGENET1K_V1).features[:16].eval()
+
         for p in vgg.parameters():
             p.requires_grad = False
         self.vgg = vgg

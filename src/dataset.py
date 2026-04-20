@@ -9,6 +9,7 @@ import SimpleITK as sitk
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms.functional as TF
 from tqdm import tqdm
+from skimage.exposure import match_histograms
 
 
 def load_mha(filepath):
